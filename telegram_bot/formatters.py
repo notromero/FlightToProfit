@@ -52,7 +52,7 @@ def _bet_label(bet_type: str, match: Match) -> tuple:
     return (bt, "Bet")
 
 def format_prediction(prediction: Prediction) -> str:
-    """Single pick — BetArabia style."""
+    """Single pick with optional secondary bets — BetArabia style."""
     match = prediction.match
     flag = _flag(match.league)
     local_time = _to_beirut(match.start_time)
@@ -64,8 +64,16 @@ def format_prediction(prediction: Prediction) -> str:
     tier_icon = {'FIRE': '🔥', 'SOLID': '💪', 'LEAN': '🎯'}.get(prediction.tier, '📊')
     
     msg = f"  {tier_icon} {bet_name} @ {conf}\n"
-    msg += f"  {bet_category}\n\n"
-    msg += f"  {flag} {match.home_team.name}\n"
+    msg += f"  {bet_category}\n"
+    
+    # Secondary bets — stackable picks for same match
+    secondary = prediction.analysis.get('secondary_bets', [])
+    for sb in secondary:
+        sb_name, sb_cat = _bet_label(sb['bet'], match)
+        sb_conf = f"{sb['prob']*100:.0f}%"
+        msg += f"  ➕ {sb_name} @ {sb_conf} ({sb_cat})\n"
+    
+    msg += f"\n  {flag} {match.home_team.name}\n"
     msg += f"     {match.away_team.name}\n"
     msg += f"  🕐 {time_str}\n"
     

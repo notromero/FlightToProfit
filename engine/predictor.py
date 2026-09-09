@@ -121,6 +121,37 @@ class Predictor:
         best_bet = max(bets, key=bets.get)
         best_prob = bets[best_bet]
         
+        # Secondary bets — other high-confidence picks for same match
+        # These are INDEPENDENT markets (can combine in same-game parlay)
+        SECONDARY_THRESHOLD = 0.68
+        secondary = []
+        
+        # Group by market type so we don't conflict
+        market_of = {
+            'HOME_WIN': 'winner', 'AWAY_WIN': 'winner', 'DRAW': 'winner',
+            'HOME_OR_DRAW': 'double_chance', 'AWAY_OR_DRAW': 'double_chance',
+            'BTTS_YES': 'btts', 'BTTS_NO': 'btts',
+        }
+        # Over/Under are their own market
+        for k in bets:
+            if k.startswith('OVER_') or k.startswith('UNDER_'):
+                market_of[k] = 'totals'
+        
+        best_market = market_of.get(best_bet, 'other')
+        
+        for bet_name, prob in sorted(bets.items(), key=lambda x: x[1], reverse=True):
+            if bet_name == best_bet:
+                continue
+            bet_market = market_of.get(bet_name, 'other')
+            # Don't add conflicting bets from same market
+            if bet_market == best_market:
+                continue
+            # Don't add double chance if we already have the straight win
+            if bet_market == 'double_chance':
+                continue
+            if prob >= SECONDARY_THRESHOLD:
+                secondary.append({'bet': bet_name, 'prob': prob})
+        
         # Value detection
         implied_prob = 0.0
         value_edge = 0.0
@@ -133,7 +164,7 @@ class Predictor:
                 implied_prob = val['implied_probability']
                 value_edge = val['value_edge']
         
-        # Tier assignment — simple and honest
+        # Tier assignment
         tier = 'AVOID'
         if best_prob >= 0.72:
             tier = 'FIRE'
@@ -147,7 +178,8 @@ class Predictor:
             'away_strength': away_strength,
             'strength_diff': strength_diff,
             'poisson_xg': xg,
-            'all_bets': bets
+            'all_bets': bets,
+            'secondary_bets': secondary
         }
         
         return Prediction(
