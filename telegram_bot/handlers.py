@@ -68,6 +68,7 @@ async def picks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Analyzing today's matches. This might take a minute...")
     
     from telegram_bot import formatters
+    from telegram_bot.results_tracker import save_picks
     import pytz
     
     try:
@@ -81,6 +82,10 @@ async def picks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         matches = _merge_odds_into_matches(matches, odds)
         predictions = predictor.get_best_bets(matches) if predictor else []
+        
+        # Save picks for auto result tracking
+        if predictions:
+            save_picks(predictions)
         
         msg = formatters.format_daily_picks(predictions, label="TODAY", date_str=today_str)
         if len(msg) > 4000:
@@ -326,6 +331,7 @@ def setup_handlers(application):
     application.add_handler(CommandHandler("bankroll", bankroll))
     application.add_handler(CommandHandler("addbet", addbet))
     application.add_handler(CommandHandler("setbankroll", setbankroll))
+    application.add_handler(CommandHandler("results", results_command))
     application.add_handler(CommandHandler("help", help_command))
     
     return {
@@ -336,3 +342,45 @@ def setup_handlers(application):
         'db': db,
         'enricher': enricher
     }
+
+async def results_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles /results — check today's pick results."""
+    await update.message.reply_text("📊 Checking results...")
+    
+    from telegram_bot.results_tracker import check_results, load_picks
+    
+    try:
+        picks = load_picks()
+        if not picks:
+            await update.message.reply_text("No picks saved for today. Use /picks first!")
+            return
+        
+        msg = await check_results(espn)
+        if msg:
+            if len(msg) > 4000:
+                chunks = [msg[i:i+4000] for i in range(0, len(msg), 4000)]
+                for chunk in chunks:
+                    await update.message.reply_text(chunk)
+            else:
+                await update.message.reply_text(msg)
+        else:
+            pending = sum(1 for p in picks if p['result'] == 'pending')
+            resolved = sum(1 for p in picks if p['result'] != 'pending')
+            wins = sum(1 for p in picks if p['result'] == 'won')
+            losses = sum(1 for p in picks if p['result'] == 'lost')
+            
+            if resolved > 0:
+                wr = wins / (wins + losses) * 100 if (wins + losses) > 0 else 0
+                msg = f"📊 RESULTS SO FAR\n━━━━━━━━━━━━━━━━━\n"
+                msg += f"✅ Won: {wins} | ❌ Lost: {losses}\n"
+                msg += f"⏳ Pending: {pending}\n"
+                msg += f"Win Rate: {wr:.0f}%\n"
+                msg += f"FlightToProfit ✈️"
+            else:
+                msg = f"⏳ All {pending} game(s) still pending. Check back later!\n"
+                msg += f"FlightToProfit ✈️"
+            
+            await update.message.reply_text(msg)
+    except Exception as e:
+        logger.error(f"Error in /results: {e}")
+        await update.message.reply_text(f"⚠️ Error checking results: {e}")

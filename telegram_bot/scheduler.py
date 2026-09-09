@@ -48,7 +48,7 @@ async def send_daily_picks(context):
         logger.error(f"Error sending daily picks: {e}")
 
 def setup_scheduler(application: Application, **kwargs):
-    """Sets up the daily scheduler for automatic picks."""
+    """Sets up the daily scheduler for automatic picks + result checking."""
     job_queue = application.job_queue
     if not job_queue:
         logger.warning("No JobQueue available. Scheduler not setup.")
@@ -73,4 +73,49 @@ def setup_scheduler(application: Application, **kwargs):
         data=kwargs
     )
     
+    # Auto-check results every 30 minutes
+    job_queue.run_repeating(
+        auto_check_results,
+        interval=1800,  # 30 minutes
+        first=300,       # first check 5 min after start
+        data=kwargs
+    )
+    
     logger.info(f"Scheduler setup for {target_time.strftime('%H:%M %Z')} daily.")
+    logger.info("Results auto-checker running every 30 minutes.")
+
+
+async def auto_check_results(context):
+    """Auto-check game results and send updates."""
+    from telegram_bot.results_tracker import check_results, load_picks
+    
+    job_data = context.job.data
+    espn = job_data.get('espn')
+    db = job_data.get('db')
+    
+    picks = load_picks()
+    if not picks:
+        return
+    
+    pending = [p for p in picks if p['result'] == 'pending']
+    if not pending:
+        return
+    
+    # Find chat_id
+    chat_id = getattr(config, 'TELEGRAM_CHAT_ID', None)
+    if not chat_id and db:
+        chat_id = db.get_setting('chat_id')
+    if not chat_id:
+        return
+    
+    try:
+        msg = await check_results(espn)
+        if msg:
+            if len(msg) > 4000:
+                chunks = [msg[i:i+4000] for i in range(0, len(msg), 4000)]
+                for chunk in chunks:
+                    await context.bot.send_message(chat_id=chat_id, text=chunk)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=msg)
+    except Exception as e:
+        logger.debug(f"Auto results check: {e}")

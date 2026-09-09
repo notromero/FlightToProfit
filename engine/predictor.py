@@ -123,7 +123,7 @@ class Predictor:
         
         # Secondary bets — other high-confidence picks for same match
         # These are INDEPENDENT markets (can combine in same-game parlay)
-        SECONDARY_THRESHOLD = 0.68
+        SECONDARY_THRESHOLD = 0.58
         secondary = []
         
         # Group by market type so we don't conflict
