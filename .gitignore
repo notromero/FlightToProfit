@@ -1,0 +1,8 @@
+# FlightToProfit ✈️
+# Betting prediction bot — cloud deployed
+
+*.pyc
+__pycache__/
+*.db
+test_*.py
+.env
