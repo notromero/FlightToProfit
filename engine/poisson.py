@@ -1,7 +1,7 @@
 """
-Poisson Model v2 — Fixed regression to mean.
-Small sample sizes get blended with league average.
-No more fake 98% Under 2.5 on every game.
+Poisson Model v3 — Full market coverage.
+Clean sheets, win to nil, handicaps, team totals, multiple O/U lines.
+Weather-adjusted expected goals.
 """
 import logging
 import numpy as np
@@ -10,10 +10,9 @@ from typing import Dict, Tuple, Any
 
 logger = logging.getLogger(__name__)
 
-# Real league averages (goals per team per game) from historical data
 LEAGUE_AVG = {
-    'soccer': {'scored': 1.35, 'conceded': 1.35},  # ~2.7 total goals per game
-    'baseball': {'scored': 4.5, 'conceded': 4.5},   # ~9.0 total runs per game
+    'soccer': {'scored': 1.35, 'conceded': 1.35},
+    'baseball': {'scored': 4.5, 'conceded': 4.5},
     'basketball': {'scored': 112, 'conceded': 112},
 }
 
@@ -30,13 +29,7 @@ class PoissonModel:
         return LEAGUE_AVG['soccer']
 
     def calculate_attack_defense(self, team: Any, sport: str = 'soccer') -> Tuple[float, float]:
-        """
-        Derive attacking and defensive strengths.
-        KEY FIX: Regression to mean for small samples.
-        With 1 game: 80% league avg + 20% actual
-        With 5 games: 50% league avg + 50% actual
-        With 10+ games: 90% actual + 10% league avg
-        """
+        """Regression to mean for small samples."""
         avg = self._get_league_avg(sport)
         league_att = avg['scored']
         league_def = avg['conceded']
@@ -48,14 +41,11 @@ class PoissonModel:
         actual_att = float(np.mean(team.goals_scored_last_n))
         actual_def = float(np.mean(team.goals_conceded_last_n))
         
-        # Regression weight: more games = trust actual data more
-        # 1 game = 0.2 weight, 3 games = 0.4, 5 games = 0.6, 10+ = 0.9
         weight = min(0.9, 0.1 + (n * 0.08))
         
         blended_att = (weight * actual_att) + ((1 - weight) * league_att)
         blended_def = (weight * actual_def) + ((1 - weight) * league_def)
         
-        # Floor: never go below 0.5 for soccer (teams always have SOME chance)
         if sport.lower() in ('soccer', 'football', 'mls'):
             blended_att = max(0.6, blended_att)
             blended_def = max(0.4, blended_def)
@@ -63,16 +53,18 @@ class PoissonModel:
         return blended_att, blended_def
 
     def predict_score(self, home_attack: float, home_defense: float, 
-                      away_attack: float, away_defense: float, 
-                      league_avg_goals: float = 1.35) -> Dict[str, float]:
-        """Calculate expected goals — home team gets ~10% boost."""
-        # Simple and honest: attack vs opponent defense
-        home_expected = (home_attack + away_defense) / 2.0 * 1.05  # slight home boost
+                      away_attack: float, away_defense: float,
+                      weather_adj: float = 1.0) -> Dict[str, float]:
+        """Expected goals with optional weather adjustment."""
+        home_expected = (home_attack + away_defense) / 2.0 * 1.05
         away_expected = (away_attack + home_defense) / 2.0
         
-        # Sanity clamp
-        home_expected = max(0.5, min(home_expected, 4.0))
-        away_expected = max(0.4, min(away_expected, 4.0))
+        # Apply weather
+        home_expected *= weather_adj
+        away_expected *= weather_adj
+        
+        home_expected = max(0.5, min(home_expected, 5.0))
+        away_expected = max(0.4, min(away_expected, 5.0))
         
         return {'home_expected': home_expected, 'away_expected': away_expected}
 
@@ -95,14 +87,80 @@ class PoissonModel:
     def over_under_probability(self, home_expected: float, away_expected: float, 
                                line: float = 2.5) -> Dict[str, float]:
         under_prob = 0.0
-        for h in range(15):
-            for a in range(15):
+        max_g = 15 if line < 6 else 20
+        for h in range(max_g):
+            for a in range(max_g):
                 if (h + a) <= line:
                     under_prob += self.score_probability(h, a, home_expected, away_expected)
         return {'over': 1.0 - under_prob, 'under': under_prob}
+
+    def multi_over_under(self, home_expected: float, away_expected: float,
+                         lines: list) -> Dict[str, Dict[str, float]]:
+        """Calculate O/U for multiple lines at once."""
+        results = {}
+        for line in lines:
+            ou = self.over_under_probability(home_expected, away_expected, line)
+            results[line] = ou
+        return results
 
     def btts_probability(self, home_expected: float, away_expected: float) -> Dict[str, float]:
         home_scores = 1.0 - poisson.pmf(0, home_expected)
         away_scores = 1.0 - poisson.pmf(0, away_expected)
         btts_yes = float(home_scores * away_scores)
         return {'btts_yes': btts_yes, 'btts_no': 1.0 - btts_yes}
+
+    def clean_sheet_probability(self, opponent_expected: float) -> float:
+        """P(opponent scores 0) = P(clean sheet for this team)."""
+        return float(poisson.pmf(0, opponent_expected))
+
+    def win_to_nil_probability(self, home_expected: float, away_expected: float,
+                                side: str = 'home') -> float:
+        """P(side wins AND opponent scores 0)."""
+        if side == 'home':
+            opp_zero = poisson.pmf(0, away_expected)
+            # P(home scores >= 1) * P(away scores 0)
+            home_scores = 1.0 - poisson.pmf(0, home_expected)
+            return float(home_scores * opp_zero)
+        else:
+            opp_zero = poisson.pmf(0, home_expected)
+            away_scores = 1.0 - poisson.pmf(0, away_expected)
+            return float(away_scores * opp_zero)
+
+    def handicap_probability(self, home_expected: float, away_expected: float,
+                              handicap: float = -1.5, side: str = 'home') -> float:
+        """P(side wins by more than |handicap|)."""
+        prob = 0.0
+        max_g = 10
+        for h in range(max_g):
+            for a in range(max_g):
+                p = self.score_probability(h, a, home_expected, away_expected)
+                if side == 'home':
+                    margin = h - a
+                else:
+                    margin = a - h
+                # handicap -1.5 means team needs to win by 2+
+                if margin + handicap > 0:
+                    prob += p
+        return float(prob)
+
+    def team_total_probability(self, team_expected: float, line: float = 0.5,
+                                over: bool = True) -> float:
+        """P(team scores over/under X)."""
+        under = 0.0
+        for g in range(int(line) + 1):
+            if g <= line:
+                under += float(poisson.pmf(g, team_expected))
+        if over:
+            return 1.0 - under
+        return under
+
+    def score_range_probability(self, home_expected: float, away_expected: float,
+                                 total_min: float, total_max: float) -> float:
+        """P(total goals between min and max)."""
+        prob = 0.0
+        for h in range(15):
+            for a in range(15):
+                total = h + a
+                if total_min <= total <= total_max:
+                    prob += self.score_probability(h, a, home_expected, away_expected)
+        return float(prob)

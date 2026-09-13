@@ -4,6 +4,9 @@ from .poisson import PoissonModel
 from .form_analyzer import FormAnalyzer
 from .h2h_analyzer import H2HAnalyzer
 from .value_detector import ValueDetector
+from .weather import WeatherEngine
+from .pitcher import PitcherAnalyzer
+from .fatigue import FatigueAnalyzer
 
 __all__ = [
     'Predictor',
@@ -11,5 +14,8 @@ __all__ = [
     'PoissonModel',
     'FormAnalyzer',
     'H2HAnalyzer',
-    'ValueDetector'
+    'ValueDetector',
+    'WeatherEngine',
+    'PitcherAnalyzer',
+    'FatigueAnalyzer'
 ]

@@ -1,7 +1,6 @@
 """
-Predictor v3 — MONEY LINE FOCUSED.
-Stop trying to predict Over/Under. Focus on WHO WINS.
-Heavy favorites + form confirmation = 70%+ win rate.
+Predictor v4 — PRO EDGE MODEL.
+Weather + Pitcher + Fatigue + Advanced Poisson + 16 bet markets.
 """
 import logging
 import numpy as np
@@ -12,8 +11,12 @@ from engine.poisson import PoissonModel
 from engine.form_analyzer import FormAnalyzer
 from engine.h2h_analyzer import H2HAnalyzer
 from engine.value_detector import ValueDetector
+from engine.weather import WeatherEngine
+from engine.pitcher import PitcherAnalyzer
+from engine.fatigue import FatigueAnalyzer
 
 logger = logging.getLogger(__name__)
+
 
 class Predictor:
     def __init__(self):
@@ -22,137 +25,214 @@ class Predictor:
         self.form = FormAnalyzer()
         self.h2h = H2HAnalyzer()
         self.value = ValueDetector()
+        self.weather = WeatherEngine()
+        self.pitcher = PitcherAnalyzer()
+        self.fatigue = FatigueAnalyzer()
 
-    def _team_strength(self, team: Team, is_home: bool) -> float:
-        """Calculate overall team strength 0-100 scale."""
-        score = 50.0  # baseline
-        
-        # Elo contribution (biggest factor)
+    def _team_strength(self, team: Team, is_home: bool, 
+                       pitcher_rating: int = 50, fatigue_adj: float = 0) -> float:
+        """Team strength 0-100 with pitcher + fatigue factors."""
+        score = 50.0
+
+        # Elo (biggest factor)
         elo_diff = team.elo_rating - 1500
-        score += elo_diff * 0.02  # +/- 10 points for 500 elo diff
-        
-        # Form contribution
+        score += elo_diff * 0.02
+
+        # Form (last 5)
         if team.recent_form:
             last5 = team.recent_form[-5:]
             wins = last5.count('W')
             losses = last5.count('L')
-            form_score = (wins - losses) * 3
-            score += form_score
-        
-        # Record contribution
+            score += (wins - losses) * 3
+
+        # Record
         w, l, d = team.overall_record
         total = w + l + d
         if total > 0:
             win_pct = w / total
-            score += (win_pct - 0.5) * 20  # +/- 10 points
-        
+            score += (win_pct - 0.5) * 20
+
         # Home advantage
         if is_home:
             score += 5
-        
-        # Goal scoring/conceding
+
+        # Goal differential
         if team.goals_scored_last_n and team.goals_conceded_last_n:
             avg_scored = np.mean(team.goals_scored_last_n)
             avg_conceded = np.mean(team.goals_conceded_last_n)
-            goal_diff = avg_scored - avg_conceded
-            score += goal_diff * 3
-        
+            score += (avg_scored - avg_conceded) * 3
+
+        # Pitcher impact (MLB only — weighted 25% of total)
+        if pitcher_rating != 50:
+            pitcher_diff = (pitcher_rating - 50) * 0.25
+            score += pitcher_diff
+
+        # Fatigue penalty
+        score += fatigue_adj
+
         return max(10, min(90, score))
 
-    def predict_match(self, match: Match, h2h: list = None) -> Prediction:
+    def predict_match(self, match: Match, h2h: list = None,
+                      pitcher_data: dict = None, weather_data: dict = None) -> Prediction:
         home = match.home_team
         away = match.away_team
-        h2h = h2h or []
-        
-        home_strength = self._team_strength(home, is_home=True)
-        away_strength = self._team_strength(away, is_home=False)
-        
+        is_soccer = match.sport.lower() in ('soccer', 'football')
+        is_baseball = match.sport.lower() in ('baseball', 'mlb')
+
+        # --- WEATHER ---
+        weather_impact = {'total_adjustment': 1.0, 'home_boost': 0, 'flags': [], 'summary': ''}
+        if weather_data:
+            weather_impact = self.weather.calculate_weather_impact(weather_data, match.sport)
+
+        # --- PITCHER ---
+        home_pitcher_rating = {'rating': 50, 'grade': 'UNKNOWN', 'era': 0, 'whip': 0, 'k9': 0, 'name': ''}
+        away_pitcher_rating = {'rating': 50, 'grade': 'UNKNOWN', 'era': 0, 'whip': 0, 'k9': 0, 'name': ''}
+        pitcher_edge = {'edge_team': 'neutral', 'edge_size': 0, 'summary': ''}
+
+        if is_baseball and pitcher_data:
+            hp_id = pitcher_data.get('home_pitcher_id')
+            ap_id = pitcher_data.get('away_pitcher_id')
+            if hp_id:
+                hp_stats = self.pitcher.get_starter_stats(hp_id)
+                if hp_stats:
+                    home_pitcher_rating = self.pitcher.rate_pitcher(hp_stats)
+            if ap_id:
+                ap_stats = self.pitcher.get_starter_stats(ap_id)
+                if ap_stats:
+                    away_pitcher_rating = self.pitcher.rate_pitcher(ap_stats)
+            pitcher_edge = self.pitcher.get_matchup_edge(home_pitcher_rating, away_pitcher_rating)
+
+        # --- FATIGUE ---
+        # Simple: check travel penalty for away team
+        travel = self.fatigue.check_travel(home.name, away.name)
+        away_fatigue = travel.get('away_travel_penalty', 0)
+
+        # --- TEAM STRENGTH ---
+        home_strength = self._team_strength(
+            home, is_home=True,
+            pitcher_rating=home_pitcher_rating['rating'],
+            fatigue_adj=weather_impact.get('home_boost', 0) * 100
+        )
+        away_strength = self._team_strength(
+            away, is_home=False,
+            pitcher_rating=away_pitcher_rating['rating'],
+            fatigue_adj=away_fatigue
+        )
+
         strength_diff = home_strength - away_strength
-        
-        # Convert strength difference to win probability
-        # Using logistic function: bigger diff = higher confidence
+
+        # Win probabilities
         home_win_prob = 1.0 / (1.0 + 10 ** (-strength_diff / 15.0))
         away_win_prob = 1.0 - home_win_prob
-        
-        # For soccer: carve out draw probability
-        is_soccer = match.sport.lower() in ('soccer', 'football')
+
+        # Soccer draw carving
         draw_prob = 0.0
-        
         if is_soccer:
-            # Draw probability decreases with strength difference
-            base_draw = 0.26  # ~26% of soccer games are draws
+            base_draw = 0.26
             draw_reduction = min(0.20, abs(strength_diff) * 0.015)
             draw_prob = max(0.05, base_draw - draw_reduction)
-            
-            # Redistribute draw prob proportionally
             total_win = home_win_prob + away_win_prob
             home_win_prob = home_win_prob / total_win * (1.0 - draw_prob)
             away_win_prob = away_win_prob / total_win * (1.0 - draw_prob)
-        
-        # Poisson for goal-based markets
+
+        # --- POISSON (weather-adjusted) ---
         home_att, home_def = self.poisson.calculate_attack_defense(home, sport=match.sport)
         away_att, away_def = self.poisson.calculate_attack_defense(away, sport=match.sport)
-        xg = self.poisson.predict_score(home_att, home_def, away_att, away_def)
         
+        weather_adj = weather_impact.get('total_adjustment', 1.0)
+        xg = self.poisson.predict_score(home_att, home_def, away_att, away_def, weather_adj=weather_adj)
+
         he = xg['home_expected']
         ae = xg['away_expected']
-        
-        ou_line = 2.5 if is_soccer else 8.5
-        ou_probs = self.poisson.over_under_probability(he, ae, line=ou_line)
-        btts_probs = self.poisson.btts_probability(he, ae)
-        
-        # Build all possible bets with probabilities
+
+        # Pitcher-adjusted expected runs (MLB)
+        if is_baseball:
+            he = self.pitcher.adjust_expected_runs(he, away_pitcher_rating['rating'])  # away pitcher faces home batters
+            ae = self.pitcher.adjust_expected_runs(ae, home_pitcher_rating['rating'])  # home pitcher faces away batters
+
+        # --- BUILD ALL BETS ---
         bets = {}
         bets['HOME_WIN'] = home_win_prob
         bets['AWAY_WIN'] = away_win_prob
-        
+
         if is_soccer:
             bets['DRAW'] = draw_prob
-            bets['BTTS_YES'] = btts_probs['btts_yes']
-            bets['BTTS_NO'] = btts_probs['btts_no']
-            # Double Chance — protects against draws
+            # BTTS
+            btts = self.poisson.btts_probability(he, ae)
+            bets['BTTS_YES'] = btts['btts_yes']
+            bets['BTTS_NO'] = btts['btts_no']
+            # Double Chance
             bets['HOME_OR_DRAW'] = home_win_prob + draw_prob
             bets['AWAY_OR_DRAW'] = away_win_prob + draw_prob
-        
-        bets[f'OVER_{ou_line}'] = ou_probs['over']
-        bets[f'UNDER_{ou_line}'] = ou_probs['under']
-        
-        # Pick the BEST bet
+            # Multiple O/U lines
+            for line in [1.5, 2.5, 3.5]:
+                ou = self.poisson.over_under_probability(he, ae, line)
+                bets[f'OVER_{line}'] = ou['over']
+                bets[f'UNDER_{line}'] = ou['under']
+            # Clean Sheets
+            bets['CLEAN_SHEET_HOME'] = self.poisson.clean_sheet_probability(ae)
+            bets['CLEAN_SHEET_AWAY'] = self.poisson.clean_sheet_probability(he)
+            # Win to Nil
+            bets['HOME_WIN_TO_NIL'] = self.poisson.win_to_nil_probability(he, ae, 'home')
+            bets['AWAY_WIN_TO_NIL'] = self.poisson.win_to_nil_probability(he, ae, 'away')
+            # Handicap
+            bets['HOME_-1.5'] = self.poisson.handicap_probability(he, ae, -1.5, 'home')
+            bets['AWAY_+1.5'] = 1.0 - bets['HOME_-1.5']
+            # Team totals
+            bets['HOME_OVER_0.5'] = self.poisson.team_total_probability(he, 0.5, over=True)
+            bets['AWAY_OVER_0.5'] = self.poisson.team_total_probability(ae, 0.5, over=True)
+            bets['HOME_OVER_1.5'] = self.poisson.team_total_probability(he, 1.5, over=True)
+            bets['AWAY_OVER_1.5'] = self.poisson.team_total_probability(ae, 1.5, over=True)
+        else:
+            # Baseball O/U lines
+            for line in [7.5, 8.5, 9.5]:
+                ou = self.poisson.over_under_probability(he, ae, line)
+                bets[f'OVER_{line}'] = ou['over']
+                bets[f'UNDER_{line}'] = ou['under']
+            # Run line (handicap)
+            bets['HOME_-1.5'] = self.poisson.handicap_probability(he, ae, -1.5, 'home')
+            bets['AWAY_+1.5'] = 1.0 - bets['HOME_-1.5']
+
+        # --- PICK BEST ---
         best_bet = max(bets, key=bets.get)
         best_prob = bets[best_bet]
-        
-        # Secondary bets — other high-confidence picks for same match
-        # These are INDEPENDENT markets (can combine in same-game parlay)
-        SECONDARY_THRESHOLD = 0.58
+
+        # --- SECONDARY BETS ---
+        SECONDARY_THRESHOLD = 0.55
+        MAX_SECONDARY = 3
         secondary = []
-        
-        # Group by market type so we don't conflict
+
         market_of = {
             'HOME_WIN': 'winner', 'AWAY_WIN': 'winner', 'DRAW': 'winner',
-            'HOME_OR_DRAW': 'double_chance', 'AWAY_OR_DRAW': 'double_chance',
+            'HOME_OR_DRAW': 'dc', 'AWAY_OR_DRAW': 'dc',
             'BTTS_YES': 'btts', 'BTTS_NO': 'btts',
+            'CLEAN_SHEET_HOME': 'cs', 'CLEAN_SHEET_AWAY': 'cs',
+            'HOME_WIN_TO_NIL': 'wtn', 'AWAY_WIN_TO_NIL': 'wtn',
+            'HOME_-1.5': 'handicap', 'AWAY_+1.5': 'handicap',
+            'HOME_OVER_0.5': 'ht_home', 'AWAY_OVER_0.5': 'ht_away',
+            'HOME_OVER_1.5': 'ht_home2', 'AWAY_OVER_1.5': 'ht_away2',
         }
-        # Over/Under are their own market
         for k in bets:
             if k.startswith('OVER_') or k.startswith('UNDER_'):
-                market_of[k] = 'totals'
-        
+                market_of[k] = f'totals_{k}'
+
         best_market = market_of.get(best_bet, 'other')
-        
+
         for bet_name, prob in sorted(bets.items(), key=lambda x: x[1], reverse=True):
+            if len(secondary) >= MAX_SECONDARY:
+                break
             if bet_name == best_bet:
                 continue
             bet_market = market_of.get(bet_name, 'other')
-            # Don't add conflicting bets from same market
             if bet_market == best_market:
                 continue
-            # Don't add double chance if we already have the straight win
-            if bet_market == 'double_chance':
+            # Skip double chance and team totals as secondary (too obvious)
+            if bet_market in ('dc', 'ht_home', 'ht_away', 'ht_home2', 'ht_away2'):
                 continue
             if prob >= SECONDARY_THRESHOLD:
                 secondary.append({'bet': bet_name, 'prob': prob})
-        
-        # Value detection
+
+        # --- VALUE ---
         implied_prob = 0.0
         value_edge = 0.0
         if match.bookmaker_odds:
@@ -163,8 +243,8 @@ class Predictor:
                 val = self.value.detect_value(best_prob, odds_val)
                 implied_prob = val['implied_probability']
                 value_edge = val['value_edge']
-        
-        # Tier assignment
+
+        # --- TIER ---
         tier = 'AVOID'
         if best_prob >= 0.72:
             tier = 'FIRE'
@@ -172,16 +252,33 @@ class Predictor:
             tier = 'SOLID'
         elif best_prob >= 0.55:
             tier = 'LEAN'
-        
+
+        # --- EDGE EXPLANATION ---
+        edge_reasons = []
+        if pitcher_edge.get('edge_size', 0) >= 10:
+            edge_reasons.append(f"⚾ {pitcher_edge['summary']}")
+        if weather_impact.get('flags'):
+            edge_reasons.append(weather_impact['summary'])
+        if strength_diff > 15:
+            edge_reasons.append(f"💪 {abs(strength_diff):.0f}pt strength gap")
+        elif strength_diff < -15:
+            edge_reasons.append(f"💪 {abs(strength_diff):.0f}pt strength gap (away)")
+
         analysis = {
             'home_strength': home_strength,
             'away_strength': away_strength,
             'strength_diff': strength_diff,
-            'poisson_xg': xg,
+            'poisson_xg': {'home_expected': he, 'away_expected': ae},
             'all_bets': bets,
-            'secondary_bets': secondary
+            'secondary_bets': secondary,
+            'weather': weather_data or {},
+            'weather_impact': weather_impact,
+            'pitcher_edge': pitcher_edge,
+            'home_pitcher': home_pitcher_rating,
+            'away_pitcher': away_pitcher_rating,
+            'edge_reasons': edge_reasons,
         }
-        
+
         return Prediction(
             match=match,
             recommended_bet=best_bet,
@@ -193,37 +290,50 @@ class Predictor:
             analysis=analysis
         )
 
-    def predict_all_matches(self, matches: List[Match], h2h_data: Optional[Dict] = None) -> List[Prediction]:
+    def predict_all_matches(self, matches: List[Match], h2h_data: Optional[Dict] = None,
+                            pitcher_map: Optional[Dict] = None) -> List[Prediction]:
         """Only FIRE and SOLID picks. No youth teams."""
         predictions = []
         h2h_data = h2h_data or {}
-        
-        # Filter garbage matches
+        pitcher_map = pitcher_map or {}
+
         skip_keywords = ['U-19', 'U-21', 'U19', 'U21', 'U-20', 'U20', 'U-23', 'U23',
                          'Reserve', 'Youth', 'Women', 'Primavera', 'B Team', 'II']
-        
+
         for match in matches:
             try:
-                # Skip youth/reserve matches
                 team_names = f"{match.home_team.name} {match.away_team.name} {match.league}"
                 if any(kw.lower() in team_names.lower() for kw in skip_keywords):
                     continue
-                
-                pred = self.predict_match(match, h2h_data.get(match.id, []))
-                
-                # Skip MLB Over/Under (no pitcher data)
-                if match.sport.lower() in ('baseball', 'mlb'):
-                    if 'OVER' in pred.recommended_bet or 'UNDER' in pred.recommended_bet:
-                        continue
-                
+
+                # Get weather
+                weather_data = None
+                if match.venue and match.start_time:
+                    try:
+                        weather_data = self.weather.get_game_weather(
+                            match.venue, match.start_time.isoformat()
+                        )
+                    except Exception:
+                        pass
+
+                # Get pitcher data for MLB
+                pitcher_data = pitcher_map.get(match.id, {})
+
+                pred = self.predict_match(
+                    match, h2h_data.get(match.id, []),
+                    pitcher_data=pitcher_data,
+                    weather_data=weather_data
+                )
+
                 if pred.tier in ['FIRE', 'SOLID']:
                     predictions.append(pred)
             except Exception as e:
                 logger.debug(f"Error predicting {match.id}: {e}")
-        
+
         predictions.sort(key=lambda p: p.confidence, reverse=True)
         return predictions
 
-    def get_best_bets(self, matches: List[Match], h2h_data: Optional[Dict] = None, max_picks: int = 5) -> List[Prediction]:
+    def get_best_bets(self, matches: List[Match], h2h_data: Optional[Dict] = None,
+                      pitcher_map: Optional[Dict] = None, max_picks: int = 5) -> List[Prediction]:
         """Top 5 picks. Quality singles."""
-        return self.predict_all_matches(matches, h2h_data)[:max_picks]
+        return self.predict_all_matches(matches, h2h_data, pitcher_map)[:max_picks]

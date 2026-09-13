@@ -24,7 +24,7 @@ def _flag(league: str) -> str:
     return flags.get(league, '🏟️')
 
 def _bet_label(bet_type: str, match: Match) -> tuple:
-    """Returns (bet_name, bet_category) matching BetArabia labels exactly."""
+    """Returns (bet_name, bet_category) matching BetArabia labels."""
     bt = bet_type.upper()
     home = match.home_team.name
     away = match.away_team.name
@@ -49,10 +49,30 @@ def _bet_label(bet_type: str, match: Match) -> tuple:
         return ("Yes", "Both Teams to Score")
     elif bt == 'BTTS_NO':
         return ("No", "Both Teams to Score")
+    elif bt == 'CLEAN_SHEET_HOME':
+        return (f"{home} Clean Sheet", "Clean Sheet")
+    elif bt == 'CLEAN_SHEET_AWAY':
+        return (f"{away} Clean Sheet", "Clean Sheet")
+    elif bt == 'HOME_WIN_TO_NIL':
+        return (f"{home} Win to Nil", "Win to Nil")
+    elif bt == 'AWAY_WIN_TO_NIL':
+        return (f"{away} Win to Nil", "Win to Nil")
+    elif bt == 'HOME_-1.5':
+        return (f"{home} -1.5", "Handicap")
+    elif bt == 'AWAY_+1.5':
+        return (f"{away} +1.5", "Handicap")
+    elif bt == 'HOME_OVER_0.5':
+        return (f"{home} Over 0.5", "Team Goals")
+    elif bt == 'AWAY_OVER_0.5':
+        return (f"{away} Over 0.5", "Team Goals")
+    elif bt == 'HOME_OVER_1.5':
+        return (f"{home} Over 1.5", "Team Goals")
+    elif bt == 'AWAY_OVER_1.5':
+        return (f"{away} Over 1.5", "Team Goals")
     return (bt, "Bet")
 
 def format_prediction(prediction: Prediction) -> str:
-    """Single pick with optional secondary bets — BetArabia style."""
+    """Single pick with secondary bets, weather, pitcher, edge."""
     match = prediction.match
     flag = _flag(match.league)
     local_time = _to_beirut(match.start_time)
@@ -66,7 +86,7 @@ def format_prediction(prediction: Prediction) -> str:
     msg = f"  {tier_icon} {bet_name} @ {conf}\n"
     msg += f"  {bet_category}\n"
     
-    # Secondary bets — stackable picks for same match
+    # Secondary bets
     secondary = prediction.analysis.get('secondary_bets', [])
     for sb in secondary:
         sb_name, sb_cat = _bet_label(sb['bet'], match)
@@ -76,6 +96,18 @@ def format_prediction(prediction: Prediction) -> str:
     msg += f"\n  {flag} {match.home_team.name}\n"
     msg += f"     {match.away_team.name}\n"
     msg += f"  🕐 {time_str}\n"
+    
+    # Edge explanation
+    edge_reasons = prediction.analysis.get('edge_reasons', [])
+    if edge_reasons:
+        msg += f"  📊 {edge_reasons[0]}\n"
+        for er in edge_reasons[1:]:
+            msg += f"  {er}\n"
+    
+    # Weather
+    weather = prediction.analysis.get('weather', {})
+    if weather.get('description') and weather['description'] != 'Unknown':
+        msg += f"  🌤️ {weather['description']}\n"
     
     return msg
 

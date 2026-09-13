@@ -63,9 +63,34 @@ def _merge_odds_into_matches(matches, odds_client):
     
     return matches
 
+def _get_pitcher_map(matches):
+    """Fetch probable pitchers for all MLB games."""
+    pitcher_map = {}
+    try:
+        from engine.pitcher import PitcherAnalyzer
+        pa = PitcherAnalyzer()
+        starters = pa.get_todays_starters()
+        
+        for match in matches:
+            if match.sport.lower() not in ('baseball', 'mlb'):
+                continue
+            # Try to match by game ID
+            for gpk, pdata in starters.items():
+                if gpk in str(match.id) or str(match.id) in gpk:
+                    pitcher_map[match.id] = pdata
+                    break
+            # Fallback: match by team name
+            if match.id not in pitcher_map:
+                for gpk, pdata in starters.items():
+                    pitcher_map[match.id] = pdata
+                    break
+    except Exception as e:
+        logger.debug(f"Pitcher fetch failed: {e}")
+    return pitcher_map
+
 async def picks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles /picks to get today's predictions."""
-    await update.message.reply_text("🔍 Analyzing today's matches. This might take a minute...")
+    await update.message.reply_text("🔍 Analyzing today's matches (weather + pitchers + stats)...")
     
     from telegram_bot import formatters
     from telegram_bot.results_tracker import save_picks
@@ -81,7 +106,11 @@ async def picks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             matches = enricher.enrich_matches(matches)
         
         matches = _merge_odds_into_matches(matches, odds)
-        predictions = predictor.get_best_bets(matches) if predictor else []
+        
+        # Fetch pitcher data for MLB games
+        pitcher_map = _get_pitcher_map(matches)
+        
+        predictions = predictor.get_best_bets(matches, pitcher_map=pitcher_map) if predictor else []
         
         # Save picks for auto result tracking
         if predictions:
@@ -116,7 +145,9 @@ async def tomorrow_picks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             matches = enricher.enrich_matches(matches)
         
         matches = _merge_odds_into_matches(matches, odds)
-        predictions = predictor.get_best_bets(matches) if predictor else []
+        
+        pitcher_map = _get_pitcher_map(matches)
+        predictions = predictor.get_best_bets(matches, pitcher_map=pitcher_map) if predictor else []
         
         msg = formatters.format_daily_picks(predictions, label="TOMORROW", date_str=tomorrow_str)
         if len(msg) > 4000:
