@@ -34,30 +34,56 @@ class Predictor:
 
     def _team_strength(self, team: Team, is_home: bool, 
                        pitcher_rating: int = 50, fatigue_adj: float = 0) -> float:
-        """Team strength 0-100 with pitcher + fatigue factors."""
+        """Team strength 0-100 with trending form + xG regression + pitcher + fatigue."""
         score = 50.0
 
         # Elo (biggest factor)
         elo_diff = team.elo_rating - 1500
         score += elo_diff * 0.02
 
-        # Form (last 5)
-        if team.recent_form:
-            last5 = team.recent_form[-5:]
-            wins = last5.count('W')
-            losses = last5.count('L')
-            score += (wins - losses) * 3
+        # --- TRENDING FORM (Masked Bettor method) ---
+        form_data = self.form.analyze_form(team)
+        trending_ppg = form_data.get('trending_ppg', 1.0)
+        # Trending PPG ranges ~0-3, center at 1.5 for average
+        score += (trending_ppg - 1.5) * 5
 
-        # Record
+        # Form trend bonus/penalty
+        trend = form_data.get('form_trend', 'STABLE')
+        if trend == 'IMPROVING':
+            score += 3
+        elif trend == 'DECLINING':
+            score -= 3
+
+        # xG regression adjustment
+        xg_flag = form_data.get('xg_flag', 'NEUTRAL')
+        if xg_flag == 'OVERPERFORMER':
+            score -= 4  # Regression coming, penalize
+        elif xg_flag == 'UNDERPERFORMER':
+            score += 4  # Bounce coming, boost
+        elif xg_flag == 'GENUINE':
+            score += 2  # Truly dominant, small boost
+
+        # Record (static form — less weight)
         w, l, d = team.overall_record
         total = w + l + d
         if total > 0:
             win_pct = w / total
-            score += (win_pct - 0.5) * 20
+            score += (win_pct - 0.5) * 10  # Reduced from 20
 
-        # Home advantage
+        # --- HOME/AWAY SPLIT (never mix them) ---
         if is_home:
-            score += 5
+            hw, hl, hd = team.home_record
+            h_total = hw + hl + hd
+            if h_total >= 3:
+                home_pct = hw / h_total
+                score += (home_pct - 0.5) * 8  # Home-specific boost
+            score += 4  # Base home advantage
+        else:
+            aw, al, ad = team.away_record
+            a_total = aw + al + ad
+            if a_total >= 3:
+                away_pct = aw / a_total
+                score += (away_pct - 0.5) * 8  # Away-specific
 
         # Goal differential
         if team.goals_scored_last_n and team.goals_conceded_last_n:
@@ -266,6 +292,22 @@ class Predictor:
             edge_reasons.append(f"💪 {abs(strength_diff):.0f}pt strength gap")
         elif strength_diff < -15:
             edge_reasons.append(f"💪 {abs(strength_diff):.0f}pt strength gap (away)")
+
+        # Trending form edges
+        home_form = self.form.analyze_form(home)
+        away_form = self.form.analyze_form(away)
+        if home_form.get('form_trend') == 'IMPROVING' and 'HOME' in best_bet:
+            edge_reasons.append(f"📈 {home.name} trending UP")
+        if away_form.get('form_trend') == 'DECLINING' and 'HOME' in best_bet:
+            edge_reasons.append(f"📉 {away.name} trending DOWN")
+        if away_form.get('form_trend') == 'IMPROVING' and 'AWAY' in best_bet:
+            edge_reasons.append(f"📈 {away.name} trending UP")
+
+        # xG regression flags
+        if home_form.get('xg_flag') == 'OVERPERFORMER' and 'AWAY' in best_bet:
+            edge_reasons.append(f"⚠️ {home.name} overperforming — regression due")
+        if away_form.get('xg_flag') == 'OVERPERFORMER' and 'HOME' in best_bet:
+            edge_reasons.append(f"⚠️ {away.name} overperforming — regression due")
 
         analysis = {
             'home_strength': home_strength,
