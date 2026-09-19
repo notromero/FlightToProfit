@@ -1,6 +1,7 @@
 """
-Predictor v4 — PRO EDGE MODEL.
-Weather + Pitcher + Fatigue + Advanced Poisson + 16 bet markets.
+Predictor v5 — MASKED BETTOR EDGE MODEL.
+Weather + Pitcher + Fatigue + Signal Stack + Draw Trap + Storyline.
+Only 3 max picks. Quality over quantity.
 """
 import logging
 import numpy as np
@@ -14,6 +15,7 @@ from engine.value_detector import ValueDetector
 from engine.weather import WeatherEngine
 from engine.pitcher import PitcherAnalyzer
 from engine.fatigue import FatigueAnalyzer
+from engine.signal_stack import SignalStack
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ class Predictor:
         self.weather = WeatherEngine()
         self.pitcher = PitcherAnalyzer()
         self.fatigue = FatigueAnalyzer()
+        self.signals = SignalStack()
 
     def _team_strength(self, team: Team, is_home: bool, 
                        pitcher_rating: int = 50, fatigue_adj: float = 0) -> float:
@@ -334,6 +337,14 @@ class Predictor:
         return predictions
 
     def get_best_bets(self, matches: List[Match], h2h_data: Optional[Dict] = None,
-                      pitcher_map: Optional[Dict] = None, max_picks: int = 5) -> List[Prediction]:
-        """Top 5 picks. Quality singles."""
-        return self.predict_all_matches(matches, h2h_data, pitcher_map)[:max_picks]
+                      pitcher_map: Optional[Dict] = None, max_picks: int = 3) -> List[Prediction]:
+        """Top 3 picks max. Signal stack filtered. Quality over quantity."""
+        all_preds = self.predict_all_matches(matches, h2h_data, pitcher_map)
+        
+        # Build match map for signal stack
+        matches_map = {m.id: m for m in matches}
+        
+        # Run signal stack — kills draw traps, filters by stars, caps at 3
+        filtered = self.signals.filter_predictions(all_preds, matches_map, min_stars=2)
+        
+        return filtered[:max_picks]

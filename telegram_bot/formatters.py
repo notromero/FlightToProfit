@@ -72,7 +72,7 @@ def _bet_label(bet_type: str, match: Match) -> tuple:
     return (bt, "Bet")
 
 def format_prediction(prediction: Prediction) -> str:
-    """Single pick with secondary bets, weather, pitcher, edge."""
+    """Single pick with signals, stars, storyline, weather."""
     match = prediction.match
     flag = _flag(match.league)
     local_time = _to_beirut(match.start_time)
@@ -81,9 +81,13 @@ def format_prediction(prediction: Prediction) -> str:
     bet_name, bet_category = _bet_label(prediction.recommended_bet, match)
     conf = f"{prediction.confidence*100:.0f}%"
     
+    # Star rating from signal stack
+    stars = prediction.analysis.get('star_count', 0)
+    star_str = '⭐' * stars if stars > 0 else ''
+    
     tier_icon = {'FIRE': '🔥', 'SOLID': '💪', 'LEAN': '🎯'}.get(prediction.tier, '📊')
     
-    msg = f"  {tier_icon} {bet_name} @ {conf}\n"
+    msg = f"  {tier_icon} {bet_name} @ {conf} {star_str}\n"
     msg += f"  {bet_category}\n"
     
     # Secondary bets
@@ -96,6 +100,17 @@ def format_prediction(prediction: Prediction) -> str:
     msg += f"\n  {flag} {match.home_team.name}\n"
     msg += f"     {match.away_team.name}\n"
     msg += f"  🕐 {time_str}\n"
+    
+    # Storyline
+    storyline = prediction.analysis.get('storyline', '')
+    if storyline:
+        msg += f"  {storyline}\n"
+    
+    # Signal stack summary (show passed signals)
+    sig_data = prediction.analysis.get('signal_stack', {})
+    signals = sig_data.get('signals', [])
+    if signals:
+        msg += f"  ✅ {len(signals)}/5 signals passed\n"
     
     # Edge explanation
     edge_reasons = prediction.analysis.get('edge_reasons', [])
@@ -129,7 +144,8 @@ def format_daily_picks(predictions: list, label: str = "TODAY", date_str: str = 
         msg += format_prediction(p)
         msg += "─────────────\n\n"
     
-    msg += "💡 Bet SINGLES, not parlays\n"
+    msg += "💡 3 quality picks > 15 rushed bets\n"
+    msg += "⭐ Signal-stacked | Singles only\n"
     msg += "FlightToProfit ✈️"
     return msg
 

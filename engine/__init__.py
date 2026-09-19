@@ -7,6 +7,7 @@ from .value_detector import ValueDetector
 from .weather import WeatherEngine
 from .pitcher import PitcherAnalyzer
 from .fatigue import FatigueAnalyzer
+from .signal_stack import SignalStack
 
 __all__ = [
     'Predictor',
@@ -17,5 +18,6 @@ __all__ = [
     'ValueDetector',
     'WeatherEngine',
     'PitcherAnalyzer',
-    'FatigueAnalyzer'
+    'FatigueAnalyzer',
+    'SignalStack'
 ]
