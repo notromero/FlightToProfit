@@ -150,16 +150,18 @@ class Predictor:
 
         strength_diff = home_strength - away_strength
 
-        # Win probabilities
-        home_win_prob = 1.0 / (1.0 + 10 ** (-strength_diff / 15.0))
+        # Win probabilities — calibrated for football reality
+        # Divisor 40 means 25pt gap ≈ 64%, 40pt gap ≈ 72%, huge gaps still <85%
+        home_win_prob = 1.0 / (1.0 + 10 ** (-strength_diff / 40.0))
         away_win_prob = 1.0 - home_win_prob
 
-        # Soccer draw carving
+        # Soccer draw carving — draws happen 25-30% of all games
         draw_prob = 0.0
         if is_soccer:
-            base_draw = 0.26
-            draw_reduction = min(0.20, abs(strength_diff) * 0.015)
-            draw_prob = max(0.05, base_draw - draw_reduction)
+            base_draw = 0.27
+            # Less draw reduction — draws are common even in mismatches
+            draw_reduction = min(0.15, abs(strength_diff) * 0.008)
+            draw_prob = max(0.08, base_draw - draw_reduction)
             total_win = home_win_prob + away_win_prob
             home_win_prob = home_win_prob / total_win * (1.0 - draw_prob)
             away_win_prob = away_win_prob / total_win * (1.0 - draw_prob)
@@ -227,7 +229,7 @@ class Predictor:
         best_prob = bets[best_bet]
 
         # --- SECONDARY BETS ---
-        SECONDARY_THRESHOLD = 0.55
+        SECONDARY_THRESHOLD = 0.48
         MAX_SECONDARY = 3
         secondary = []
 
@@ -275,11 +277,11 @@ class Predictor:
 
         # --- TIER ---
         tier = 'AVOID'
-        if best_prob >= 0.72:
+        if best_prob >= 0.62:
             tier = 'FIRE'
-        elif best_prob >= 0.62:
-            tier = 'SOLID'
         elif best_prob >= 0.55:
+            tier = 'SOLID'
+        elif best_prob >= 0.50:
             tier = 'LEAN'
 
         # --- EDGE EXPLANATION ---
@@ -370,7 +372,7 @@ class Predictor:
                     weather_data=weather_data
                 )
 
-                if pred.tier in ['FIRE', 'SOLID']:
+                if pred.tier in ['FIRE', 'SOLID', 'LEAN']:
                     predictions.append(pred)
             except Exception as e:
                 logger.debug(f"Error predicting {match.id}: {e}")
