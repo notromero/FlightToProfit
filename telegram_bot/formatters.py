@@ -17,9 +17,13 @@ def _to_beirut(dt):
 def _flag(league: str) -> str:
     flags = {
         'mlb': '🇺🇸', 'nba': '🇺🇸', 'usa.1': '🇺🇸',
-        'eng.1': '🏴󠁧󠁢󠁥󠁮󠁧󠁿', 'esp.1': '🇪🇸', 'ger.1': '🇩🇪',
+        'eng.1': '🏴󠁧󠁢󠁥󠁮󠁧󠁿', 'eng.2': '🏴󠁧󠁢󠁥󠁮󠁧󠁿', 'esp.1': '🇪🇸', 'ger.1': '🇩🇪',
         'ita.1': '🇮🇹', 'fra.1': '🇫🇷', 'tur.1': '🇹🇷',
-        'uefa.champions': '🇪🇺', 'uefa.europa': '🇪🇺'
+        'ned.1': '🇳🇱', 'por.1': '🇵🇹', 'bel.1': '🇧🇪',
+        'sco.1': '🏴󠁧󠁢󠁳󠁣󠁴󠁿', 'gre.1': '🇬🇷', 'sui.1': '🇨🇭', 'aut.1': '🇦🇹',
+        'mex.1': '🇲🇽', 'bra.1': '🇧🇷', 'arg.1': '🇦🇷',
+        'ksa.1': '🇸🇦', 'jpn.1': '🇯🇵', 'aus.1': '🇦🇺',
+        'uefa.champions': '🇪🇺', 'uefa.europa': '🇪🇺', 'uefa.europa.conf': '🇪🇺'
     }
     return flags.get(league, '🏟️')
 

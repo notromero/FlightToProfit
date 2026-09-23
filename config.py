@@ -11,17 +11,40 @@ ESPN_BASE_URL = 'https://site.web.api.espn.com/apis/site/v2/sports'
 MLB_API_BASE = 'https://statsapi.mlb.com/api/v1'
 ODDS_API_BASE = 'https://api.the-odds-api.com/v4'
 SUPPORTED_SPORTS = {
+    # --- BASEBALL ---
     'MLB': 'baseball/mlb',
+    # --- BASKETBALL ---
     'NBA': 'basketball/nba',
+    # --- TOP 5 SOCCER LEAGUES ---
     'EPL': 'soccer/eng.1',
     'La Liga': 'soccer/esp.1',
     'Bundesliga': 'soccer/ger.1',
     'Serie A': 'soccer/ita.1',
     'Ligue 1': 'soccer/fra.1',
-    'MLS': 'soccer/usa.1',
+    # --- SECOND TIER EUROPE ---
+    'Eredivisie': 'soccer/ned.1',
+    'Primeira Liga': 'soccer/por.1',
+    'Belgian Pro': 'soccer/bel.1',
+    'Scottish Prem': 'soccer/sco.1',
+    'Super Lig': 'soccer/tur.1',
+    'Greek Super League': 'soccer/gre.1',
+    'Swiss Super League': 'soccer/sui.1',
+    'Austrian Bundesliga': 'soccer/aut.1',
+    # --- UEFA CLUB ---
     'Champions League': 'soccer/uefa.champions',
     'Europa League': 'soccer/uefa.europa',
-    'Turkish Super Lig': 'soccer/tur.1'
+    'Conference League': 'soccer/uefa.europa.conf',
+    # --- AMERICAS ---
+    'MLS': 'soccer/usa.1',
+    'Liga MX': 'soccer/mex.1',
+    'Brasileirao': 'soccer/bra.1',
+    'Argentine Liga': 'soccer/arg.1',
+    # --- OTHER ---
+    'Saudi Pro League': 'soccer/ksa.1',
+    'J-League': 'soccer/jpn.1',
+    'A-League': 'soccer/aus.1',
+    # --- ENGLISH LOWER ---
+    'Championship': 'soccer/eng.2',
 }
 ODDS_API_SPORT_KEYS = {
     'MLB': 'baseball_mlb',
@@ -34,7 +57,13 @@ ODDS_API_SPORT_KEYS = {
     'MLS': 'soccer_usa_mls',
     'Champions League': 'soccer_uefa_champs_league',
     'Europa League': 'soccer_uefa_europa_league',
-    'Turkish Super Lig': 'soccer_turkey_super_league'
+    'Super Lig': 'soccer_turkey_super_league',
+    'Eredivisie': 'soccer_netherlands_eredivisie',
+    'Primeira Liga': 'soccer_portugal_primeira_liga',
+    'Liga MX': 'soccer_mexico_ligamx',
+    'Brasileirao': 'soccer_brazil_campeonato',
+    'Argentine Liga': 'soccer_argentina_primera_division',
+    'Championship': 'soccer_england_efl_cup',
 }
 DB_PATH = 'db/golazo.db'
 HOME_ADVANTAGE_ELO = 65
