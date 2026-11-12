@@ -1,11 +1,10 @@
 """
-Poisson Model v3 — Full market coverage.
+Poisson Model v4 — Pure Python edition. No scipy, no numpy.
 Clean sheets, win to nil, handicaps, team totals, multiple O/U lines.
 Weather-adjusted expected goals.
 """
+import math
 import logging
-import numpy as np
-from scipy.stats import poisson
 from typing import Dict, Tuple, Any
 
 logger = logging.getLogger(__name__)
@@ -15,6 +14,21 @@ LEAGUE_AVG = {
     'baseball': {'scored': 4.5, 'conceded': 4.5},
     'basketball': {'scored': 112, 'conceded': 112},
 }
+
+
+def _mean(values):
+    """Pure Python mean — drop-in for np.mean on lists."""
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _poisson_pmf(k, lam):
+    """P(X=k) for Poisson(lam). Pure Python, no scipy."""
+    if lam <= 0:
+        return 1.0 if k == 0 else 0.0
+    return (lam ** k) * math.exp(-lam) / math.factorial(k)
+
 
 class PoissonModel:
     def __init__(self):
@@ -33,46 +47,46 @@ class PoissonModel:
         avg = self._get_league_avg(sport)
         league_att = avg['scored']
         league_def = avg['conceded']
-        
+
         if not team.goals_scored_last_n or not team.goals_conceded_last_n:
             return league_att, league_def
-        
+
         n = len(team.goals_scored_last_n)
-        actual_att = float(np.mean(team.goals_scored_last_n))
-        actual_def = float(np.mean(team.goals_conceded_last_n))
-        
+        actual_att = _mean(team.goals_scored_last_n)
+        actual_def = _mean(team.goals_conceded_last_n)
+
         weight = min(0.9, 0.1 + (n * 0.08))
-        
+
         blended_att = (weight * actual_att) + ((1 - weight) * league_att)
         blended_def = (weight * actual_def) + ((1 - weight) * league_def)
-        
+
         if sport.lower() in ('soccer', 'football', 'mls'):
             blended_att = max(0.6, blended_att)
             blended_def = max(0.4, blended_def)
-        
+
         return blended_att, blended_def
 
-    def predict_score(self, home_attack: float, home_defense: float, 
+    def predict_score(self, home_attack: float, home_defense: float,
                       away_attack: float, away_defense: float,
                       weather_adj: float = 1.0) -> Dict[str, float]:
         """Expected goals with optional weather adjustment."""
         home_expected = (home_attack + away_defense) / 2.0 * 1.05
         away_expected = (away_attack + home_defense) / 2.0
-        
+
         # Apply weather
         home_expected *= weather_adj
         away_expected *= weather_adj
-        
+
         home_expected = max(0.5, min(home_expected, 5.0))
         away_expected = max(0.4, min(away_expected, 5.0))
-        
+
         return {'home_expected': home_expected, 'away_expected': away_expected}
 
-    def score_probability(self, home_goals: int, away_goals: int, 
+    def score_probability(self, home_goals: int, away_goals: int,
                           home_expected: float, away_expected: float) -> float:
-        return float(poisson.pmf(home_goals, home_expected) * poisson.pmf(away_goals, away_expected))
+        return _poisson_pmf(home_goals, home_expected) * _poisson_pmf(away_goals, away_expected)
 
-    def match_outcome_probabilities(self, home_expected: float, away_expected: float, 
+    def match_outcome_probabilities(self, home_expected: float, away_expected: float,
                                     max_goals: int = 8) -> Dict[str, float]:
         home_win = draw = away_win = 0.0
         for h in range(max_goals + 1):
@@ -84,7 +98,7 @@ class PoissonModel:
         total = home_win + draw + away_win
         return {'home_win': home_win/total, 'draw': draw/total, 'away_win': away_win/total}
 
-    def over_under_probability(self, home_expected: float, away_expected: float, 
+    def over_under_probability(self, home_expected: float, away_expected: float,
                                line: float = 2.5) -> Dict[str, float]:
         under_prob = 0.0
         max_g = 15 if line < 6 else 20
@@ -104,27 +118,27 @@ class PoissonModel:
         return results
 
     def btts_probability(self, home_expected: float, away_expected: float) -> Dict[str, float]:
-        home_scores = 1.0 - poisson.pmf(0, home_expected)
-        away_scores = 1.0 - poisson.pmf(0, away_expected)
-        btts_yes = float(home_scores * away_scores)
+        home_scores = 1.0 - _poisson_pmf(0, home_expected)
+        away_scores = 1.0 - _poisson_pmf(0, away_expected)
+        btts_yes = home_scores * away_scores
         return {'btts_yes': btts_yes, 'btts_no': 1.0 - btts_yes}
 
     def clean_sheet_probability(self, opponent_expected: float) -> float:
         """P(opponent scores 0) = P(clean sheet for this team)."""
-        return float(poisson.pmf(0, opponent_expected))
+        return _poisson_pmf(0, opponent_expected)
 
     def win_to_nil_probability(self, home_expected: float, away_expected: float,
                                 side: str = 'home') -> float:
         """P(side wins AND opponent scores 0)."""
         if side == 'home':
-            opp_zero = poisson.pmf(0, away_expected)
+            opp_zero = _poisson_pmf(0, away_expected)
             # P(home scores >= 1) * P(away scores 0)
-            home_scores = 1.0 - poisson.pmf(0, home_expected)
-            return float(home_scores * opp_zero)
+            home_scores = 1.0 - _poisson_pmf(0, home_expected)
+            return home_scores * opp_zero
         else:
-            opp_zero = poisson.pmf(0, home_expected)
-            away_scores = 1.0 - poisson.pmf(0, away_expected)
-            return float(away_scores * opp_zero)
+            opp_zero = _poisson_pmf(0, home_expected)
+            away_scores = 1.0 - _poisson_pmf(0, away_expected)
+            return away_scores * opp_zero
 
     def handicap_probability(self, home_expected: float, away_expected: float,
                               handicap: float = -1.5, side: str = 'home') -> float:
@@ -141,7 +155,7 @@ class PoissonModel:
                 # handicap -1.5 means team needs to win by 2+
                 if margin + handicap > 0:
                     prob += p
-        return float(prob)
+        return prob
 
     def team_total_probability(self, team_expected: float, line: float = 0.5,
                                 over: bool = True) -> float:
@@ -149,7 +163,7 @@ class PoissonModel:
         under = 0.0
         for g in range(int(line) + 1):
             if g <= line:
-                under += float(poisson.pmf(g, team_expected))
+                under += _poisson_pmf(g, team_expected)
         if over:
             return 1.0 - under
         return under
@@ -163,4 +177,4 @@ class PoissonModel:
                 total = h + a
                 if total_min <= total <= total_max:
                     prob += self.score_probability(h, a, home_expected, away_expected)
-        return float(prob)
+        return prob

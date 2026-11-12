@@ -4,7 +4,6 @@ Weather + Pitcher + Fatigue + Signal Stack + Draw Trap + Storyline.
 Only 3 max picks. Quality over quantity.
 """
 import logging
-import numpy as np
 from typing import List, Dict, Optional, Any
 from data.models import Match, Prediction, Team
 from engine.elo import EloRating
@@ -87,8 +86,8 @@ class Predictor:
 
         # Goal differential
         if team.goals_scored_last_n and team.goals_conceded_last_n:
-            avg_scored = np.mean(team.goals_scored_last_n)
-            avg_conceded = np.mean(team.goals_conceded_last_n)
+            avg_scored = sum(team.goals_scored_last_n) / len(team.goals_scored_last_n)
+            avg_conceded = sum(team.goals_conceded_last_n) / len(team.goals_conceded_last_n)
             score += (avg_scored - avg_conceded) * 3
 
         # Pitcher impact (MLB only — weighted 25% of total)

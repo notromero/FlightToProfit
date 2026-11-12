@@ -5,7 +5,6 @@ xG regression detection: overperformers get penalized, underperformers get boost
 Home/Away form split — never mix them.
 """
 import logging
-import numpy as np
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -38,8 +37,8 @@ class FormAnalyzer:
         mid = len(points) // 2
         recent_half = points[:mid] if mid > 0 else points
         older_half = points[mid:]
-        recent_avg = np.mean(recent_half) if recent_half else 1.0
-        older_avg = np.mean(older_half) if older_half else 1.0
+        recent_avg = sum(recent_half) / len(recent_half) if recent_half else 1.0
+        older_avg = sum(older_half) / len(older_half) if older_half else 1.0
 
         if recent_avg > older_avg + 0.3:
             trend = 'IMPROVING'
@@ -66,8 +65,8 @@ class FormAnalyzer:
         gs = team.goals_scored_last_n[:n_games] if team.goals_scored_last_n else []
         gc = team.goals_conceded_last_n[:n_games] if team.goals_conceded_last_n else []
 
-        avg_scored = float(np.mean(gs)) if gs else 0.0
-        avg_conceded = float(np.mean(gc)) if gc else 0.0
+        avg_scored = sum(gs) / len(gs) if gs else 0.0
+        avg_conceded = sum(gc) / len(gc) if gc else 0.0
 
         # --- xG REGRESSION PROXY ---
         # Without actual xG data, we approximate:
@@ -82,8 +81,8 @@ class FormAnalyzer:
         # Recent scoring trend (last 3 vs prev 3)
         scoring_trend = 'STABLE'
         if len(gs) >= 6:
-            recent_scoring = np.mean(gs[:3])
-            older_scoring = np.mean(gs[3:6])
+            recent_scoring = sum(gs[:3]) / 3
+            older_scoring = sum(gs[3:6]) / 3
             if recent_scoring > older_scoring + 0.5:
                 scoring_trend = 'SCORING_MORE'
             elif recent_scoring < older_scoring - 0.5:
@@ -125,8 +124,8 @@ class FormAnalyzer:
             return 'NEUTRAL'
 
         wins = form[:5].count('W') if len(form) >= 5 else 0
-        avg_scored = np.mean(gs[:5])
-        avg_conceded = np.mean(gc[:5])
+        avg_scored = sum(gs[:5]) / len(gs[:5])
+        avg_conceded = sum(gc[:5]) / len(gc[:5])
         goal_diff = avg_scored - avg_conceded
 
         # Winning a lot but barely outscoring opponents = lucky/overperformer

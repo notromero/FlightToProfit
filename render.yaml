@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: flighttoprofit
+    runtime: docker
+    plan: free
+    envVars:
+      - key: RENDER_EXTERNAL_URL
+        sync: false
+      - key: PORT
+        value: 10000
